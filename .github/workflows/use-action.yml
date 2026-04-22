@@ -1,0 +1,82 @@
+name: Smoke Test (Released Action)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: 'workflow run'
+        required: true
+        default: 'true'
+  workflow_run:
+    workflows: ["Create release"]
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test-defaults:
+    name: Smoke Test (defaults)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run released action against fixture (defaults)
+        id: e2e
+        uses: somaz94/kind-e2e-test-action@v1
+        with:
+          working_directory: tests/fixtures/sample_operator_e2e
+
+      - name: Verify outputs
+        run: |
+          CLUSTER='${{ steps.e2e.outputs.cluster_name }}'
+          EXIT='${{ steps.e2e.outputs.e2e_exit_code }}'
+          echo "cluster_name=${CLUSTER}"
+          echo "e2e_exit_code=${EXIT}"
+          if [[ "${CLUSTER}" != "kind" ]]; then
+            echo "::error::expected cluster_name='kind', got '${CLUSTER}'"
+            exit 1
+          fi
+          if [[ "${EXIT}" != "0" ]]; then
+            echo "::error::expected e2e_exit_code='0', got '${EXIT}'"
+            exit 1
+          fi
+          echo "[PASS] smoke test — defaults"
+
+  smoke-test-custom:
+    name: Smoke Test (pinned kind_version + custom cluster_name)
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run released action with custom inputs
+        id: e2e
+        uses: somaz94/kind-e2e-test-action@v1
+        with:
+          working_directory: tests/fixtures/sample_operator_e2e
+          kind_version: v0.23.0
+          cluster_name: smoke-e2e
+          e2e_command: 'go test ./test/e2e/ -v -count=1'
+
+      - name: Verify outputs
+        run: |
+          CLUSTER='${{ steps.e2e.outputs.cluster_name }}'
+          EXIT='${{ steps.e2e.outputs.e2e_exit_code }}'
+          echo "cluster_name=${CLUSTER}"
+          echo "e2e_exit_code=${EXIT}"
+          if [[ "${CLUSTER}" != "smoke-e2e" ]]; then
+            echo "::error::expected cluster_name='smoke-e2e', got '${CLUSTER}'"
+            exit 1
+          fi
+          if [[ "${EXIT}" != "0" ]]; then
+            echo "::error::expected e2e_exit_code='0', got '${EXIT}'"
+            exit 1
+          fi
+          echo "[PASS] smoke test — custom inputs"

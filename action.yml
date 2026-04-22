@@ -1,0 +1,230 @@
+name: Kind E2E Test Action
+description: Install kind, create a kind cluster, and run a Go end-to-end test command in one composite action.
+author: somaz94
+
+branding:
+  icon: box
+  color: blue
+
+inputs:
+  go_version_file:
+    description: "Path to go.mod (or another file) used by actions/setup-go as 'go-version-file'. Ignored when 'go_version' is set."
+    required: false
+    default: 'go.mod'
+  go_version:
+    description: "Explicit Go version (e.g., '1.22'). Takes precedence over 'go_version_file' when non-empty."
+    required: false
+    default: ''
+  working_directory:
+    description: "Directory to run all commands in (Go module root)."
+    required: false
+    default: '.'
+  cache:
+    description: "Enable Go module/build cache in actions/setup-go."
+    required: false
+    default: 'true'
+  run_mod_tidy:
+    description: "When 'true', run 'go mod tidy' before the e2e command. Matches the existing inline workflow behaviour."
+    required: false
+    default: 'true'
+  kind_version:
+    description: "kind release to install. Use 'latest' (default) or a version tag like 'v0.23.0'."
+    required: false
+    default: 'latest'
+  kind_node_image:
+    description: "Node image passed to 'kind create cluster --image'. Leave empty to use kind's default for the installed release."
+    required: false
+    default: ''
+  cluster_name:
+    description: "Name passed to 'kind create cluster --name'."
+    required: false
+    default: 'kind'
+  e2e_command:
+    description: "E2E command executed from 'working_directory' (e.g., 'make test-e2e', 'go test ./test/e2e/ -v')."
+    required: false
+    default: 'make test-e2e'
+
+outputs:
+  cluster_name:
+    description: "Name of the kind cluster that was created (echo of the 'cluster_name' input)."
+    value: ${{ steps.cluster.outputs.cluster_name }}
+  e2e_exit_code:
+    description: "Exit code of the e2e command (always '0' when the action succeeds; the action fails otherwise)."
+    value: ${{ steps.e2e.outputs.e2e_exit_code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        GO_VERSION: ${{ inputs.go_version }}
+        GO_VERSION_FILE: ${{ inputs.go_version_file }}
+        WORKING_DIRECTORY: ${{ inputs.working_directory }}
+        KIND_VERSION: ${{ inputs.kind_version }}
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+        E2E_COMMAND: ${{ inputs.e2e_command }}
+      run: |
+        set -euo pipefail
+        echo "::group::Validate inputs"
+
+        if [[ -z "${GO_VERSION// }" && -z "${GO_VERSION_FILE// }" ]]; then
+          echo "::error::either 'go_version' or 'go_version_file' must be set"
+          exit 1
+        fi
+
+        if [[ ! -d "$WORKING_DIRECTORY" ]]; then
+          echo "::error::working_directory '$WORKING_DIRECTORY' is not a directory"
+          exit 1
+        fi
+
+        if [[ -z "${CLUSTER_NAME// }" ]]; then
+          echo "::error::'cluster_name' must not be empty"
+          exit 1
+        fi
+
+        if [[ -z "${E2E_COMMAND// }" ]]; then
+          echo "::error::'e2e_command' must not be empty"
+          exit 1
+        fi
+
+        if [[ -n "${GO_VERSION// }" ]]; then
+          echo "go_version=$GO_VERSION (explicit)"
+        else
+          echo "go_version_file=$GO_VERSION_FILE"
+          if [[ ! -f "$WORKING_DIRECTORY/$GO_VERSION_FILE" ]]; then
+            echo "::warning::go_version_file '$WORKING_DIRECTORY/$GO_VERSION_FILE' not found; actions/setup-go may fail"
+          fi
+        fi
+        echo "kind_version=$KIND_VERSION"
+        echo "cluster_name=$CLUSTER_NAME"
+        echo "e2e_command=$E2E_COMMAND"
+        echo "::endgroup::"
+
+    - name: Set up Go (from file)
+      if: inputs.go_version == ''
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: ${{ inputs.working_directory == '.' && inputs.go_version_file || format('{0}/{1}', inputs.working_directory, inputs.go_version_file) }}
+        cache: ${{ inputs.cache }}
+
+    - name: Set up Go (explicit)
+      if: inputs.go_version != ''
+      uses: actions/setup-go@v6
+      with:
+        go-version: ${{ inputs.go_version }}
+        cache: ${{ inputs.cache }}
+
+    - name: Install kind
+      shell: bash
+      env:
+        KIND_VERSION: ${{ inputs.kind_version }}
+      run: |
+        set -euo pipefail
+        echo "::group::Install kind ($KIND_VERSION)"
+
+        case "$(uname -s)" in
+          Linux)  OS=linux ;;
+          Darwin) OS=darwin ;;
+          *)
+            echo "::error::unsupported OS '$(uname -s)'; kind-e2e-test-action supports Linux and macOS runners"
+            exit 1
+            ;;
+        esac
+
+        case "$(uname -m)" in
+          x86_64|amd64)  ARCH=amd64 ;;
+          aarch64|arm64) ARCH=arm64 ;;
+          *)
+            echo "::error::unsupported architecture '$(uname -m)'"
+            exit 1
+            ;;
+        esac
+
+        if [[ "$KIND_VERSION" == "latest" ]]; then
+          URL="https://kind.sigs.k8s.io/dl/latest/kind-${OS}-${ARCH}"
+        else
+          URL="https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-${OS}-${ARCH}"
+        fi
+
+        echo "Downloading $URL"
+        curl -fsSLo ./kind "$URL"
+        chmod +x ./kind
+        sudo mv ./kind /usr/local/bin/kind
+        echo "::endgroup::"
+
+    - name: Verify kind installation
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "::group::kind version"
+        kind version
+        echo "::endgroup::"
+
+    - name: Create kind cluster
+      id: cluster
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+        NODE_IMAGE: ${{ inputs.kind_node_image }}
+      run: |
+        set -euo pipefail
+        echo "::group::kind create cluster ($CLUSTER_NAME)"
+        args=(--name "$CLUSTER_NAME")
+        if [[ -n "${NODE_IMAGE// }" ]]; then
+          args+=(--image "$NODE_IMAGE")
+        fi
+        kind create cluster "${args[@]}"
+        kubectl cluster-info --context "kind-${CLUSTER_NAME}"
+        echo "cluster_name=$CLUSTER_NAME" >> "$GITHUB_OUTPUT"
+        echo "::endgroup::"
+
+    - name: go mod tidy
+      if: inputs.run_mod_tidy == 'true'
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        echo "::group::go mod tidy"
+        go mod tidy
+        echo "::endgroup::"
+
+    - name: Run e2e
+      id: e2e
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      env:
+        E2E_COMMAND: ${{ inputs.e2e_command }}
+      run: |
+        set -euo pipefail
+        echo "::group::Run e2e: $E2E_COMMAND"
+        bash -c "$E2E_COMMAND"
+        echo "::endgroup::"
+        echo "e2e_exit_code=0" >> "$GITHUB_OUTPUT"
+
+    - name: Summary
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+        KIND_VERSION: ${{ inputs.kind_version }}
+        NODE_IMAGE: ${{ inputs.kind_node_image }}
+        E2E_COMMAND: ${{ inputs.e2e_command }}
+        WORKING_DIRECTORY: ${{ inputs.working_directory }}
+      run: |
+        set -euo pipefail
+        if [[ -z "${GITHUB_STEP_SUMMARY:-}" ]]; then
+          exit 0
+        fi
+        {
+          echo "### Kind E2E Test"
+          echo ""
+          echo "| Field | Value |"
+          echo "|-------|-------|"
+          echo "| Working directory | \`${WORKING_DIRECTORY}\` |"
+          echo "| kind version | \`${KIND_VERSION}\` |"
+          if [[ -n "${NODE_IMAGE// }" ]]; then
+            echo "| Node image | \`${NODE_IMAGE}\` |"
+          fi
+          echo "| Cluster name | \`${CLUSTER_NAME}\` |"
+          echo "| E2E command | \`${E2E_COMMAND}\` |"
+          echo "| Result | :white_check_mark: pass |"
+        } >> "$GITHUB_STEP_SUMMARY"
