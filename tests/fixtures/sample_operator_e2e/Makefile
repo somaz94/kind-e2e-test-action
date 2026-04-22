@@ -5,5 +5,4 @@ test-e2e:
 	@kind get clusters | grep -q . || { echo "no kind cluster running"; exit 1; }
 	kubectl cluster-info
 	kubectl get nodes
-	kubectl wait --for=condition=Ready nodes --all --timeout=60s
 	go test ./test/e2e/ -v -count=1

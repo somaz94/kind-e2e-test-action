@@ -23,6 +23,10 @@ inputs:
     description: "Enable Go module/build cache in actions/setup-go."
     required: false
     default: 'true'
+  cache_dependency_path:
+    description: "Passthrough to actions/setup-go 'cache-dependency-path'. Leave empty to rely on setup-go's default (go.sum next to go.mod). Handy for mono-repos where go.sum lives elsewhere."
+    required: false
+    default: ''
   run_mod_tidy:
     description: "When 'true', run 'go mod tidy' before the e2e command. Matches the existing inline workflow behaviour."
     required: false
@@ -32,17 +36,29 @@ inputs:
     required: false
     default: 'latest'
   kind_node_image:
-    description: "Node image passed to 'kind create cluster --image'. Leave empty to use kind's default for the installed release."
+    description: "Node image passed to 'kind create cluster --image'. Leave empty to use kind's default for the installed release. Ignored for nodes that set an image inside 'kind_config'."
+    required: false
+    default: ''
+  kind_config:
+    description: "Path to a kind cluster config YAML passed as 'kind create cluster --config'. Leave empty for a single-node default cluster."
     required: false
     default: ''
   cluster_name:
     description: "Name passed to 'kind create cluster --name'."
     required: false
     default: 'kind'
+  cluster_ready_timeout:
+    description: "Timeout passed to 'kubectl wait --for=condition=Ready nodes --all --timeout=<value>' after cluster creation. Leave empty to skip the wait."
+    required: false
+    default: '60s'
   e2e_command:
     description: "E2E command executed from 'working_directory' (e.g., 'make test-e2e', 'go test ./test/e2e/ -v')."
     required: false
     default: 'make test-e2e'
+  upload_logs_on_failure:
+    description: "When 'true' (default), on action failure run 'kind export logs' and upload the directory as a workflow artifact named 'kind-logs-<cluster_name>-<run_id>-<run_attempt>'."
+    required: false
+    default: 'true'
 
 outputs:
   cluster_name:
@@ -62,7 +78,9 @@ runs:
         GO_VERSION_FILE: ${{ inputs.go_version_file }}
         WORKING_DIRECTORY: ${{ inputs.working_directory }}
         KIND_VERSION: ${{ inputs.kind_version }}
+        KIND_CONFIG: ${{ inputs.kind_config }}
         CLUSTER_NAME: ${{ inputs.cluster_name }}
+        CLUSTER_READY_TIMEOUT: ${{ inputs.cluster_ready_timeout }}
         E2E_COMMAND: ${{ inputs.e2e_command }}
       run: |
         set -euo pipefail
@@ -88,6 +106,11 @@ runs:
           exit 1
         fi
 
+        if [[ -n "${KIND_CONFIG// }" && ! -f "$KIND_CONFIG" ]]; then
+          echo "::error::kind_config '$KIND_CONFIG' not found"
+          exit 1
+        fi
+
         if [[ -n "${GO_VERSION// }" ]]; then
           echo "go_version=$GO_VERSION (explicit)"
         else
@@ -97,7 +120,9 @@ runs:
           fi
         fi
         echo "kind_version=$KIND_VERSION"
+        echo "kind_config=${KIND_CONFIG:-<none>}"
         echo "cluster_name=$CLUSTER_NAME"
+        echo "cluster_ready_timeout=${CLUSTER_READY_TIMEOUT:-<skip>}"
         echo "e2e_command=$E2E_COMMAND"
         echo "::endgroup::"
 
@@ -107,6 +132,7 @@ runs:
       with:
         go-version-file: ${{ inputs.working_directory == '.' && inputs.go_version_file || format('{0}/{1}', inputs.working_directory, inputs.go_version_file) }}
         cache: ${{ inputs.cache }}
+        cache-dependency-path: ${{ inputs.cache_dependency_path }}
 
     - name: Set up Go (explicit)
       if: inputs.go_version != ''
@@ -114,6 +140,7 @@ runs:
       with:
         go-version: ${{ inputs.go_version }}
         cache: ${{ inputs.cache }}
+        cache-dependency-path: ${{ inputs.cache_dependency_path }}
 
     - name: Install kind
       shell: bash
@@ -167,6 +194,7 @@ runs:
       env:
         CLUSTER_NAME: ${{ inputs.cluster_name }}
         NODE_IMAGE: ${{ inputs.kind_node_image }}
+        KIND_CONFIG: ${{ inputs.kind_config }}
       run: |
         set -euo pipefail
         echo "::group::kind create cluster ($CLUSTER_NAME)"
@@ -174,9 +202,24 @@ runs:
         if [[ -n "${NODE_IMAGE// }" ]]; then
           args+=(--image "$NODE_IMAGE")
         fi
+        if [[ -n "${KIND_CONFIG// }" ]]; then
+          args+=(--config "$KIND_CONFIG")
+        fi
         kind create cluster "${args[@]}"
         kubectl cluster-info --context "kind-${CLUSTER_NAME}"
         echo "cluster_name=$CLUSTER_NAME" >> "$GITHUB_OUTPUT"
+        echo "::endgroup::"
+
+    - name: Wait for cluster readiness
+      if: inputs.cluster_ready_timeout != ''
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+        CLUSTER_READY_TIMEOUT: ${{ inputs.cluster_ready_timeout }}
+      run: |
+        set -euo pipefail
+        echo "::group::kubectl wait nodes Ready (timeout=$CLUSTER_READY_TIMEOUT)"
+        kubectl --context "kind-${CLUSTER_NAME}" wait --for=condition=Ready nodes --all --timeout="$CLUSTER_READY_TIMEOUT"
         echo "::endgroup::"
 
     - name: go mod tidy
@@ -201,12 +244,49 @@ runs:
         echo "::endgroup::"
         echo "e2e_exit_code=0" >> "$GITHUB_OUTPUT"
 
+    - name: Export kind logs on failure
+      id: export_logs
+      if: failure() && inputs.upload_logs_on_failure == 'true'
+      shell: bash
+      env:
+        CLUSTER_NAME: ${{ inputs.cluster_name }}
+      run: |
+        set +e
+        LOGS_DIR="${RUNNER_TEMP:-/tmp}/kind-logs-${CLUSTER_NAME}"
+        rm -rf "$LOGS_DIR"
+        mkdir -p "$LOGS_DIR"
+        echo "::group::kind export logs ($LOGS_DIR)"
+        if ! command -v kind >/dev/null 2>&1; then
+          echo "::notice::kind binary not available (failure occurred before install) — skipping log export"
+          echo "logs_dir=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if ! kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
+          echo "::notice::cluster '$CLUSTER_NAME' not present — skipping log export"
+          echo "logs_dir=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        kind export logs "$LOGS_DIR" --name "$CLUSTER_NAME" || echo "::warning::'kind export logs' returned non-zero (logs may be partial)"
+        echo "logs_dir=$LOGS_DIR" >> "$GITHUB_OUTPUT"
+        echo "::endgroup::"
+
+    - name: Upload kind logs artifact
+      if: failure() && inputs.upload_logs_on_failure == 'true' && steps.export_logs.outputs.logs_dir != ''
+      uses: actions/upload-artifact@v4
+      with:
+        name: kind-logs-${{ inputs.cluster_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ steps.export_logs.outputs.logs_dir }}
+        retention-days: 7
+        if-no-files-found: warn
+
     - name: Summary
       shell: bash
       env:
         CLUSTER_NAME: ${{ inputs.cluster_name }}
         KIND_VERSION: ${{ inputs.kind_version }}
         NODE_IMAGE: ${{ inputs.kind_node_image }}
+        KIND_CONFIG: ${{ inputs.kind_config }}
+        CLUSTER_READY_TIMEOUT: ${{ inputs.cluster_ready_timeout }}
         E2E_COMMAND: ${{ inputs.e2e_command }}
         WORKING_DIRECTORY: ${{ inputs.working_directory }}
       run: |
@@ -224,7 +304,11 @@ runs:
           if [[ -n "${NODE_IMAGE// }" ]]; then
             echo "| Node image | \`${NODE_IMAGE}\` |"
           fi
+          if [[ -n "${KIND_CONFIG// }" ]]; then
+            echo "| Cluster config | \`${KIND_CONFIG}\` |"
+          fi
           echo "| Cluster name | \`${CLUSTER_NAME}\` |"
+          echo "| Cluster ready timeout | \`${CLUSTER_READY_TIMEOUT:-<skip>}\` |"
           echo "| E2E command | \`${E2E_COMMAND}\` |"
           echo "| Result | :white_check_mark: pass |"
         } >> "$GITHUB_STEP_SUMMARY"
