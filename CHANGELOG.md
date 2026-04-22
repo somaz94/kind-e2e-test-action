@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased (2026-04-22)
+
+### Chores
+
+- **deps:** bump actions/upload-artifact from 4 to 7 ([86398f7](https://github.com/somaz94/kind-e2e-test-action/commit/86398f7f8be4f716f8736fb30467eed4cf649498))
+- drop unused docker dependabot ecosystem (composite action, no Dockerfile) ([6bdf76d](https://github.com/somaz94/kind-e2e-test-action/commit/6bdf76d7ae7d02001e80ba3dca719521350b6c5e))
+- set CODEOWNERS to @somaz94 ([c5f0a5e](https://github.com/somaz94/kind-e2e-test-action/commit/c5f0a5e4f9b92196524cf925929125aedf87615c))
+
+### Contributors
+
+- somaz
+
+<br/>
+
 ## [v1.1.0](https://github.com/somaz94/kind-e2e-test-action/compare/v1.0.0...v1.1.0) (2026-04-22)
 
 ### Code Refactoring
