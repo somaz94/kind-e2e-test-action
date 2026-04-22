@@ -272,7 +272,7 @@ runs:
 
     - name: Upload kind logs artifact
       if: failure() && inputs.upload_logs_on_failure == 'true' && steps.export_logs.outputs.logs_dir != ''
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: kind-logs-${{ inputs.cluster_name }}-${{ github.run_id }}-${{ github.run_attempt }}
         path: ${{ steps.export_logs.outputs.logs_dir }}
