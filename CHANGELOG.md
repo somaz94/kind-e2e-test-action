@@ -2,10 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased (2026-04-22)
+## Unreleased (2026-06-24)
+
+### Continuous Integration
+
+- add DCO check via shared reusable workflow ([6700913](https://github.com/somaz94/kind-e2e-test-action/commit/670091356427210b2ce31e19e59b0a9ce6fee673))
+- add concurrency guards to recurring workflows ([fb89617](https://github.com/somaz94/kind-e2e-test-action/commit/fb89617fcb744361bff04ed2fc04b3935eb0ec5a))
 
 ### Chores
 
+- **deps:** bump actions/checkout from 6 to 7 ([aefa109](https://github.com/somaz94/kind-e2e-test-action/commit/aefa1097d0072985401424f4b86ca47909226f78))
 - **deps:** bump actions/download-artifact from 4 to 8 ([6c8fd81](https://github.com/somaz94/kind-e2e-test-action/commit/6c8fd810ed21a9cb067a379eb7130ca0dae9dda2))
 - **deps:** bump actions/upload-artifact from 4 to 7 ([86398f7](https://github.com/somaz94/kind-e2e-test-action/commit/86398f7f8be4f716f8736fb30467eed4cf649498))
 - drop unused docker dependabot ecosystem (composite action, no Dockerfile) ([6bdf76d](https://github.com/somaz94/kind-e2e-test-action/commit/6bdf76d7ae7d02001e80ba3dca719521350b6c5e))
