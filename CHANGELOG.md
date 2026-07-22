@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 
 ### Chores
 
+- **deps:** bump actions/setup-python from 6 to 7 ([80270dc](https://github.com/somaz94/kind-e2e-test-action/commit/80270dc2406fd40924c3d2d1e72e740c2849d5ff))
 - **deps:** bump actions/setup-go from 6 to 7 ([aa2778b](https://github.com/somaz94/kind-e2e-test-action/commit/aa2778bb6fde37e8ac3a0936c4d6b75f018cdc19))
 - **deps:** bump actions/checkout from 6 to 7 ([aefa109](https://github.com/somaz94/kind-e2e-test-action/commit/aefa1097d0072985401424f4b86ca47909226f78))
 - **deps:** bump actions/download-artifact from 4 to 8 ([6c8fd81](https://github.com/somaz94/kind-e2e-test-action/commit/6c8fd810ed21a9cb067a379eb7130ca0dae9dda2))
